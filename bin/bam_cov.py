@@ -1580,7 +1580,7 @@ class GenomeCoverage:
 
         # reverse
         rcov_out = pyBigWig.open('%s-.bw' % os.path.splitext(output_file)[0], 'w')
-        rcout_out.addHeader(headers)
+        rcov_out.addHeader(headers)
 
       else:
         cov_out = pyBigWig.open(output_file, 'w')
