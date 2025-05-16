@@ -7,11 +7,11 @@ import os
 import pdb
 import sys
 
-import h5py
 from natsort import natsorted
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import tqdm
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -57,10 +57,11 @@ def main():
     data_stats = json.load(stats_open)
   num_targets = data_stats['num_targets']
   target_length = data_stats['target_length']
+  num_seqs = data_stats[f'{options.split}_seqs']
 
   # read target values
   tfr_pattern = '%s/tfrecords/%s*.tfr' % (tfr_data_dir, options.split)
-  targets = read_tfr(tfr_pattern, target_length)
+  targets = read_tfr(tfr_pattern, target_length, num_seqs)
 
   # compute stats
   target_means = np.mean(targets, axis=(0,1), dtype='float64')
@@ -72,7 +73,6 @@ def main():
     cols = (ti, target_means[ti], target_max[ti], targets_df.identifier[ti], targets_df.description[ti])
     print('%-4d  %8.3f  %7.3f  %16s  %s' % cols, file=table_out)
   table_out.close()
-  exit()
 
   # plot distributions for each target
   distr_dir = '%s/distr' % options.out_dir
@@ -91,12 +91,12 @@ def main():
 
 def plot_distr(targets_ti, out_pdf):
   plt.figure()
-  sns.distplot(targets_ti)
+  sns.displot(targets_ti)
   plt.savefig(out_pdf)
   plt.close()
 
 
-def read_tfr(tfr_pattern, target_len):
+def read_tfr(tfr_pattern, target_len, num_seqs):
   tfr_files = natsorted(glob.glob(tfr_pattern))
   if tfr_files:
     dataset = tf.data.Dataset.list_files(tf.constant(tfr_files), shuffle=False)
@@ -110,8 +110,13 @@ def read_tfr(tfr_pattern, target_len):
   targets = []
 
   # collect inputs and outputs
-  for seq_raw, targets_raw in dataset:
+  for _, targets_raw in tqdm.tqdm(dataset, total=num_seqs):
     targets1 = targets_raw.numpy().reshape((target_len,-1))
+    if np.isnan(targets1).any():
+      print('NaN target values')
+    elif np.isinf(targets1).any():
+      print('Inf target values')
+
     targets.append(targets1.astype('float16'))
 
   return np.array(targets)
