@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # =========================================================================
-from __future__ import print_function
-
 from array import array
 from optparse import OptionParser
 from collections import OrderedDict
@@ -152,6 +150,7 @@ def main():
   genome_coverage = GenomeCoverage(
       chrom_lengths,
       stranded=options.stranded,
+      track_multi=(options.multi_em > 0),
       smooth_multi_sd=options.smooth_multi_sd,
       clip_max=options.clip_max,
       clip_max_multi=options.clip_max_multi,
@@ -184,10 +183,10 @@ def main():
 
   # unfinished.
 
-  if options.cut_bias_kmer is not None:
-    kmer_norms = compute_cut_norms(options.cut_bias_kmer, multi_weight_matrix,
-                                   chromosomes, chrom_lengths,
-                                   options.fasta_file)
+  # if options.cut_bias_kmer is not None:
+  #   kmer_norms = compute_cut_norms(options.cut_bias_kmer, multi_weight_matrix,
+  #                                  chromosomes, chrom_lengths,
+  #                                  options.fasta_file)
 
   ################################################################
   # normalize for GC content
@@ -443,6 +442,7 @@ class GenomeCoverage:
   def __init__(self,
                chrom_lengths,
                stranded=False,
+               track_multi=False,
                smooth_multi_sd=1,
                clip_max=None,
                clip_max_multi=None,
@@ -472,12 +472,11 @@ class GenomeCoverage:
       self.chrom_lengths = chrom_lengths
 
     self.genome_length = sum(self.chrom_lengths.values())
-    # self.unique_counts = np.zeros(self.genome_length, dtype='uint16')
-    # self.uc_max = np.iinfo(self.unique_counts.dtype).max
     self.unique_counts = np.zeros(self.genome_length, dtype='float32')
     self.uc_max = np.finfo(self.unique_counts.dtype).max
     self.active_blocks = None
 
+    self.track_multi = track_multi
     self.smooth_multi_sd = smooth_multi_sd
 
     self.shift_center = shift_center
@@ -1290,24 +1289,32 @@ class GenomeCoverage:
 
           # count unique
           if num_maps == 1:
-            # self.unique_counts[gis] = np.clip(self.unique_counts[gis], 0, self.uc_max) + 1
-            self.unique_counts[gis] += 1/len(gis)
+            self.unique_counts[gis] += 1 / len(gis)
 
-          # count BWA multi-mapper
-          elif align.has_tag('XA') and not align.has_tag('NH'):
-            # update multi-map data structures
-            ri = self.read_multi_bwa(multi_positions, multi_reads, multi_weight, align, gis[0], ri, align_shift_forward, align_shift_reverse)
+          elif not self.track_multi:
+            # distribute uniformly between multi-mapping positions
+            self.unique_counts[gis] += 1 / len(gis) / num_maps
 
-          # count NH-tag multi-mapper
-          elif align.has_tag('NH') and not align.has_tag('XA'):
-           # update multi-map data structures
-            ri = self.read_multi_nh(multi_positions, multi_reads, multi_weight, align, gis, ri,
-              read_id, last_read_id, genome_sorted, multi_read_index)
+            # this breaks if the alternative mapping locations aren't independent reads,
+            # but are instead stored in the primary alignment tags
+            assert(not align.has_tag('XA'))
 
           else:
-            print('Multi-map tag scenario that I did not prepare for:', file=sys.stderr)
-            print(align, file=sys.stderr)
-            exit(1)
+            # count BWA multi-mapper
+            if align.has_tag('XA') and not align.has_tag('NH'):
+              # update multi-map data structures
+              ri = self.read_multi_bwa(multi_positions, multi_reads, multi_weight, align, gis[0], ri, align_shift_forward, align_shift_reverse)
+
+            # count NH-tag multi-mapper
+            elif align.has_tag('NH') and not align.has_tag('XA'):
+            # update multi-map data structures
+              ri = self.read_multi_nh(multi_positions, multi_reads, multi_weight, align, gis, ri,
+                read_id, last_read_id, genome_sorted, multi_read_index)
+
+            else:
+              print('Multi-map tag scenario that I did not prepare for:', file=sys.stderr)
+              print(align, file=sys.stderr)
+              exit(1)
 
       if not genome_sorted:
         last_read_id = read_id
@@ -1449,7 +1456,6 @@ class GenomeCoverage:
 
           # begin a new active block
           active_start = i
-
 
   def read_multi_bwa(self, multi_positions, multi_reads, multi_weight, align, gi, ri, align_shift_forward, align_shift_reverse):
     """ Helper function to process a BWA multi-mapper. """
