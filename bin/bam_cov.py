@@ -75,6 +75,8 @@ def main():
       help='Maximum coverage at a single position from multi-mapping reads [Default: %default]')
   parser.add_option('-f', dest='fasta_file',
       default=None, help='FASTA to obtain sequence to control for GC% [Default: %default]')
+  parser.add_option('--sizes', dest='size_file',
+      default=None, help='Chromosome sizes (if different subset of chromosomes from alignment step) [Default: %default]')
   parser.add_option('-g', dest='gc',
       default=False, action='store_true',
       help='Control for local GC% [Default: %default]')
@@ -122,9 +124,26 @@ def main():
   ################################################################
   # initialize genome coverage
 
-  bam_in = pysam.AlignmentFile(bam_file)
-  chrom_lengths = OrderedDict(zip(bam_in.references, bam_in.lengths))
-  bam_in.close()
+  # get chromosome lengths (from BAM or from genome sizes file)
+  chrom_lengths = None
+  if options.size_file is None :
+    bam_in = pysam.AlignmentFile(bam_file)
+    chrom_lengths = OrderedDict(zip(bam_in.references, bam_in.lengths))
+    bam_in.close()
+    
+  else :
+    with open(options.size_file, 'rt') as size_f :
+      
+      references = []
+      lengths = []
+      for line in size_f.readlines() :
+        line_parts = line.strip().split('\t')
+        
+        if len(line_parts) == 2 :
+          references.append(line_parts[0])
+          lengths.append(int(line_parts[1]))
+      
+      chrom_lengths = OrderedDict(zip(references, lengths))
 
   # determine single or paired
   sp = single_or_pair(bam_file)
@@ -383,8 +402,8 @@ def regplot_shift(vals1, vals2, preds2, out_pdf):
 
   # plot data and seaborn model
   ax = sns.regplot(
-      vals1,
-      vals2,
+      x=vals1,
+      y=vals2,
       color='black',
       order=3,
       scatter_kws={'color': 'black',
@@ -435,6 +454,11 @@ class GenomeCoverage:
                maps_t=1,
                fasta_file=None):
 
+    # chromosome lookup dictionary
+    self.chrom_lookup = OrderedDict()
+    for ci, [chrom, _] in enumerate(chrom_lengths.items()):
+        self.chrom_lookup[chrom] = ci
+    
     self.stranded = stranded
     if self.stranded:
       # model + and - strand of each chromosome
@@ -1183,6 +1207,9 @@ class GenomeCoverage:
     last_read_id = ''
     if genome_sorted:
       multi_read_index = {}
+    
+    # initialize dictionary of matches to non-kept chromosome
+    chrom_missing_dict = {}
 
     for align in pysam.AlignmentFile(bam_file):
       if self.all_unique:
@@ -1193,9 +1220,20 @@ class GenomeCoverage:
         num_maps = len(align.get_tag('XA').split(';')[:-1]) + 1
       else:
         num_maps = 1
+      
+      is_missing_chrom = False
+      if not (align.reference_name in self.chrom_lengths or '%s+'%align.reference_name in self.chrom_lengths):
+        is_missing_chrom = True
+      
+      if is_missing_chrom and align.reference_name not in chrom_missing_dict :
+        chrom_missing_dict[align.reference_name] = True
+        
+        print('[Warning] Skipping reads for missing chromosome %s' % align.reference_name, file=sys.stderr)
 
-      if not align.is_unmapped and num_maps <= self.maps_t and not align.is_duplicate:
+      if not is_missing_chrom and not align.is_unmapped and num_maps <= self.maps_t and not align.is_duplicate:
         read_id = (align.query_name, align.is_read1)
+        
+        reference_id = self.chrom_lookup[align.reference_name]
 
         if self.all_overlap:          
           chrom_pos = np.array(align.get_reference_positions())
@@ -1221,34 +1259,52 @@ class GenomeCoverage:
           # make singleton list to sync w/ overlaps
           chrom_pos = np.array([chrom_pos])
 
+        skip_faulty_read = False
         # set genome index
         if self.stranded:
-          strand = '+'*(not align.is_reverse) + '-'*(align.is_reverse)
-          gis = self.genome_indexes(align.reference_id, chrom_pos, strand)
+          
+          #determine strand
+          strand = None
+          if align.is_paired:
+            if align.is_read1 and align.is_reverse and not align.mate_is_reverse:
+              strand = '+'
+            elif align.is_read1 and not align.is_reverse and align.mate_is_reverse:
+              strand = '-'
+            elif not align.is_read1 and align.is_reverse and not align.mate_is_reverse:
+              strand = '-'
+            elif not align.is_read1 and not align.is_reverse and align.mate_is_reverse:
+              strand = '+'
+          else:
+            strand = '+'*(not align.is_reverse) + '-'*(align.is_reverse)
+          
+          if strand is None:
+            skip_faulty_read = True
+          else:
+            gis = self.genome_indexes(reference_id, chrom_pos, strand)
         else:
-          gis = self.genome_indexes(align.reference_id, chrom_pos)
-        # assert(gi >= 0)
-        # assert(gi < len(self.unique_counts))
-        assert(np.all(np.greater_equal(gis, 0)))
-        assert(np.all(np.less(gis, len(self.unique_counts))))
+          gis = self.genome_indexes(reference_id, chrom_pos)
+        
+        if not skip_faulty_read:
+          assert(np.all(np.greater_equal(gis, 0)))
+          assert(np.all(np.less(gis, len(self.unique_counts))))
 
-        # count unique
-        if num_maps == 1:
-          # self.unique_counts[gis] = np.clip(self.unique_counts[gis], 0, self.uc_max) + 1
-          self.unique_counts[gis] += 1/len(gis)
+          # count unique
+          if num_maps == 1:
+            # self.unique_counts[gis] = np.clip(self.unique_counts[gis], 0, self.uc_max) + 1
+            self.unique_counts[gis] += 1/len(gis)
 
-        # count BWA multi-mapper
-        elif align.has_tag('XA') and not align.has_tag('NH'):
-          # update multi-map data structures
-          ri = self.read_multi_bwa(multi_positions, multi_reads, multi_weight, align, gis[0], ri, align_shift_forward, align_shift_reverse)
+          # count BWA multi-mapper
+          elif align.has_tag('XA') and not align.has_tag('NH'):
+            # update multi-map data structures
+            ri = self.read_multi_bwa(multi_positions, multi_reads, multi_weight, align, gis[0], ri, align_shift_forward, align_shift_reverse)
 
-        # count NH-tag multi-mapper
-        elif align.has_tag('NH') and not align.has_tag('XA'):
-          # update multi-map data structures
-          ri = self.read_multi_nh(multi_positions, multi_reads, multi_weight, align, gis, ri,
-            read_id, last_read_id, genome_sorted, multi_read_index)
+          # count NH-tag multi-mapper
+          elif align.has_tag('NH') and not align.has_tag('XA'):
+           # update multi-map data structures
+            ri = self.read_multi_nh(multi_positions, multi_reads, multi_weight, align, gis, ri,
+              read_id, last_read_id, genome_sorted, multi_read_index)
 
-        else:
+          else:
             print('Multi-map tag scenario that I did not prepare for:', file=sys.stderr)
             print(align, file=sys.stderr)
             exit(1)
@@ -1405,43 +1461,49 @@ class GenomeCoverage:
     multi_align_strings = align.get_tag('XA').split(';')[:-1]
     multi_maps = len(multi_align_strings)+1
 
+    # actual number of multi-mappers with existing chromosomes
+    multi_maps_actual = 1
+    
     # for each multi-map
     for multi_align_str in multi_align_strings:
 
       # extract alignment information
       multi_chrom, multi_start, multi_cigar, _ = multi_align_str.split(',')
       multi_strand = multi_start[0]
+      
+      if multi_chrom in self.chrom_lengths or '%s+'%multi_chrom in self.chrom_lengths:
+        
+        # determine chromosome length
+        if self.stranded:
+          multi_chrom_length = self.chrom_lengths['%s+'%multi_chrom]
+        else:
+          multi_chrom_length = self.chrom_lengths[multi_chrom]
 
-      # determine chromosome length
-      if self.stranded:
-        multi_chrom_length = self.chrom_lengths['%s+'%multi_chrom]
-      else:
-        multi_chrom_length = self.chrom_lengths[multi_chrom]
+        # determine shifted event position
+        #  (are positions 0 or 1-based? SAM is 1-based so that's my best guess)
+        if multi_strand == '+':
+          multi_pos = int(multi_start[1:])-1 + align_shift_forward
+          multi_pos = min(multi_pos, multi_chrom_length-1)
+        elif multi_strand == '-':
+          multi_pos = int(multi_start[1:])-1 + cigar_len(multi_cigar)-1 - align_shift_reverse
+          multi_pos = max(multi_pos, 0)
+        else:
+          print('Bad assumption of initial +- for BWA multimap position: %s' % multi_start, file=sys.stderr)
+          exit(1)
 
-      # determine shifted event position
-      #  (are positions 0 or 1-based? SAM is 1-based so that's my best guess)
-      if multi_strand == '+':
-        multi_pos = int(multi_start[1:])-1 + align_shift_forward
-        multi_pos = min(multi_pos, multi_chrom_length-1)
-      elif multi_strand == '-':
-        multi_pos = int(multi_start[1:])-1 + cigar_len(multi_cigar)-1 - align_shift_reverse
-        multi_pos = max(multi_pos, 0)
-      else:
-        print('Bad assumption of initial +- for BWA multimap position: %s' % multi_start, file=sys.stderr)
-        exit(1)
+        # determine genome index
+        if self.stranded:
+          mgi = self.genome_index_chrom(multi_chrom, multi_pos, multi_strand)
+        else:
+          mgi = self.genome_index_chrom(multi_chrom, multi_pos)
 
-      # determine genome index
-      if self.stranded:
-        mgi = self.genome_index_chrom(multi_chrom, multi_pos, multi_strand)
-      else:
-        mgi = self.genome_index_chrom(multi_chrom, multi_pos)
-
-      # update multi alignment matrix
-      multi_positions.append(mgi)
+        # update multi alignment matrix
+        multi_positions.append(mgi)
+        multi_maps_actual += 1
 
     # finish updating multi alignment matrix for all multi alignments
-    multi_reads.extend([ri]*multi_maps)
-    multi_weight.extend([np.float32(1./multi_maps)]*multi_maps)
+    multi_reads.extend([ri]*multi_maps_actual)
+    multi_weight.extend([np.float32(1./multi_maps)]*multi_maps_actual)
 
     # update read index
     return ri + 1
@@ -1580,7 +1642,7 @@ class GenomeCoverage:
 
         # reverse
         rcov_out = pyBigWig.open('%s-.bw' % os.path.splitext(output_file)[0], 'w')
-        rcout_out.addHeader(headers)
+        rcov_out.addHeader(headers)
 
       else:
         cov_out = pyBigWig.open(output_file, 'w')
