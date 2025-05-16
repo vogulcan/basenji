@@ -112,6 +112,7 @@ def main():
 
     # read coverage
     seq_cov_nt = genome_cov_open.read(mseq.chr, mseq.start, mseq.end)
+    seq_cov_nt = seq_cov_nt.astype('float32')
 
     # interpolate NaN
     if options.interp_nan:
@@ -308,10 +309,16 @@ class CovFace:
     else:
       if chrm in self.cov_open:
         cov = self.cov_open[chrm][start:end]
+
+        # handle mysterious inf's
+        cov = np.clip(cov, np.finfo(np.float16).min, np.finfo(np.float16).max)
+
+        # pad
         pad_zeros = end-start-len(cov)
         if pad_zeros > 0:
           cov_pad = np.zeros(pad_zeros, dtype='bool')
           cov = np.concatenate([cov, cov_pad])
+
       else:
         print("WARNING: %s doesn't see %s:%d-%d. Setting to all zeros." % \
           (self.cov_file, chrm, start, end), file=sys.stderr)
