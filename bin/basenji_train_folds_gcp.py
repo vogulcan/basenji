@@ -138,7 +138,7 @@ def main():
   # initialize VM cluster
 
   python_path = '/opt/conda/bin/python'
-  basenji_path = '/home/drk/code/basenji/bin/'
+  basenji_path = '/home/drk/basenji/bin/'
 
   jobs = []
 
