@@ -1,0 +1,7 @@
+index	identifier	file	description
+0	Hsieh2019_mESC_uC	/home/drk/hic/data/data/coolers/mm10/Hsieh2019/mESC_mm10_4DNFILZ1CPT8.mapq_30.2048.cool	HIC:mESC
+1	Bonev2017_mESC	/home/drk/hic/data/data/coolers/mm10/Bonev2017/HiC_ES_all.mm10.mapq_30.2048.cool	HIC:mESC
+2	Bonev2017_CN	/home/drk/hic/data/data/coolers/mm10/Bonev2017/HiC_CN_all.mm10.mapq_30.2048.cool	HIC:cortical neuron
+3	Bonev2017_ncx_CN	/home/drk/hic/data/data/coolers/mm10/Bonev2017/HiC_ncx_CN_all.mm10.mapq_30.2048.cool	HIC:neocortex cortical neuron
+4	Bonev2017_NPC	/home/drk/hic/data/data/coolers/mm10/Bonev2017/HiC_NPC_all.mm10.mapq_30.2048.cool	HIC:neural progenitor cell
+5	Bonev2017_ncx_NPC	/home/drk/hic/data/data/coolers/mm10/Bonev2017/HiC_ncx_NPC_all.mm10.mapq_30.2048.cool	HIC:neocortex neural progenitor cell

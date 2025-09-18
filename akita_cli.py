@@ -17,8 +17,8 @@ from cooltools.lib.numutils import set_diag
 # -----------------------------
 # Hardcoded config
 # -----------------------------
-BASE = "/home/carlos/Clone/gnn_benchmark/basenji"
-DATA_STATS = f"{BASE}/data/hg38/statistics.json"
+BASE = "."
+DATA_STATS = f"{BASE}/data/hg38_statistics.json"
 MODELS_GLOB = f"{BASE}/models/f*c0/train/model0_best.h5"
 
 # -----------------------------
@@ -149,8 +149,8 @@ def resolve_target_selection(targets: Tuple[str, ...]) -> Tuple[List[int], List[
 @click.argument("fasta", type=click.Path(exists=True, dir_okay=False))
 @click.option("--batch-size", type=int, default=4, show_default=True, help="Batch size for inference.")
 @click.option("--out", "out_npz", default="akita_ensemble_outputs.npz", show_default=True, help="Output NPZ path.")
-@click.option("--models-glob", default=MODELS_GLOB, show_default=True, help="Glob for human model0_best.h5 files.")
-@click.option("--stats", "stats_path", default=DATA_STATS, show_default=True, help="Path to statistics.json.")
+@click.option("--models-glob", default=MODELS_GLOB, show_default=True, help="Glob for human model0_best.h5 files. Use model1_best.h5 for mouse.")
+@click.option("--stats", "stats_path", default=DATA_STATS, show_default=True, help="Path to statistics.json. Use mm10_statistics.json for mouse in data.")
 @click.option(
     "--targets",
     multiple=True,
