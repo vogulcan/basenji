@@ -15,25 +15,34 @@ from basenji import dna_io, seqnn
 from cooltools.lib.numutils import set_diag
 
 # -----------------------------
-# Hardcoded config
+# Base config (paths relative to CWD by default)
 # -----------------------------
 BASE = "."
-DATA_STATS = f"{BASE}/data/hg38_statistics.json"
-MODELS_GLOB = f"{BASE}/models/f*c0/train/model0_best.h5"
+HG38_STATS_DEFAULT = f"{BASE}/data/hg38_statistics.json"
+MM10_STATS_DEFAULT = f"{BASE}/data/mm10_statistics.json"
+
+HG38_MODELS_DEFAULT = f"{BASE}/models/f*c0/train/model0_best.h5"  # human models
+MM10_MODELS_DEFAULT = f"{BASE}/models/f*c0/train/model1_best.h5"  # mouse models
 
 # -----------------------------
-# Hardcoded human target heads
+# Hardcoded target heads
 # -----------------------------
-HEADS: Dict[int, Tuple[str, str]] = {
+HEADS_HG38: Dict[int, Tuple[str, str]] = {
     0: ("HFF",     "HIC:HFF"),
     1: ("H1hESC",  "HIC:H1hESC"),
     2: ("GM12878", "HIC:GM12878"),
     3: ("IMR90",   "HIC:IMR90"),
     4: ("HCT116",  "HIC:HCT116"),
 }
-HEAD_IDENTIFIERS = [HEADS[i][0] for i in sorted(HEADS)]
-HEAD_IDENTIFIERS_SET = {h.lower() for h in HEAD_IDENTIFIERS}
 
+HEADS_MM10: Dict[int, Tuple[str, str]] = {
+    0: ("Hsieh2019_mESC_uC", "HIC:mESC"),
+    1: ("Bonev2017_mESC",    "HIC:mESC"),
+    2: ("Bonev2017_CN",      "HIC:cortical neuron"),
+    3: ("Bonev2017_ncx_CN",  "HIC:neocortex cortical neuron"),
+    4: ("Bonev2017_NPC",     "HIC:neural progenitor cell"),
+    5: ("Bonev2017_ncx_NPC", "HIC:neocortex neural progenitor cell"),
+}
 
 # -----------------------------
 # Utilities
@@ -42,7 +51,7 @@ def load_data_stats(stats_path: str) -> Dict[str, Any]:
     with open(stats_path) as f:
         s = json.load(f)
     seq_length = s["seq_length"]
-    target_length = s["target_length"]
+    target_length = s["target_length"]             # flattened upper-tri length
     hic_diags = s["diagonal_offset"]
     target_crop = s["crop_bp"] // s["pool_width"]
     target_length1 = s["seq_length"] // s["pool_width"]
@@ -53,7 +62,6 @@ def load_data_stats(stats_path: str) -> Dict[str, Any]:
         "hic_diags": hic_diags,
         "target_length1_cropped": target_length1_cropped,
     }
-
 
 def find_models_and_params(models_glob: str) -> List[Tuple[str, str]]:
     models = sorted(glob.glob(models_glob))
@@ -67,17 +75,21 @@ def find_models_and_params(models_glob: str) -> List[Tuple[str, str]]:
         pairs.append((m, p))
     return pairs
 
-
-def load_seqnn_model(model_h5: str, params_json: str):
+def load_seqnn_model(model_h5: str, params_json: str, head_i: int):
     with open(params_json) as f:
         params = json.load(f)
     params_model = params["model"]
     model = seqnn.SeqNN(params_model)
-    model.restore(model_h5, head_i=0)
+    # Silence Keras summary while restoring (optional; safe if noisy)
+    import contextlib
+    with open(os.devnull, "w") as devnull, \
+         contextlib.redirect_stdout(devnull), \
+         contextlib.redirect_stderr(devnull):
+        model.restore(model_h5, head_i=head_i)
     return model
 
-
 def from_upper_triu(vector_repr: np.ndarray, matrix_len: int, num_diags: int) -> np.ndarray:
+    """Reconstruct symmetric matrix (NaNs along masked diagonals) from upper-tri vector."""
     z = np.zeros((matrix_len, matrix_len), dtype=np.float32)
     triu_tup = np.triu_indices(matrix_len, num_diags)
     z[triu_tup] = vector_repr
@@ -85,8 +97,8 @@ def from_upper_triu(vector_repr: np.ndarray, matrix_len: int, num_diags: int) ->
         set_diag(z, np.nan, i)
     return z + z.T
 
-
 def fasta_batches(fasta_path: str, batch_size: int) -> Iterable[Tuple[List[str], List[Tuple[str, str]]]]:
+    """Yield (headers, records) where records are (header, seq) uppercase."""
     with pysam.FastxFile(fasta_path) as fh:
         headers, recs = [], []
         for rec in fh:
@@ -98,8 +110,8 @@ def fasta_batches(fasta_path: str, batch_size: int) -> Iterable[Tuple[List[str],
         if headers:
             yield headers, recs
 
-
 def encode_and_stack(records: List[Tuple[str, str]], seq_length: int) -> np.ndarray:
+    """Convert list of (header, seq) to batch array [B, seq_length, 4]."""
     arrs = []
     for hdr, seq in records:
         if len(seq) != seq_length:
@@ -109,15 +121,17 @@ def encode_and_stack(records: List[Tuple[str, str]], seq_length: int) -> np.ndar
         arrs.append(dna_io.dna_1hot(seq))
     return np.stack(arrs, axis=0).astype(np.float32)
 
-
-def resolve_target_selection(targets: Tuple[str, ...]) -> Tuple[List[int], List[str]]:
+def resolve_target_selection(targets: Tuple[str, ...], HEADS: Dict[int, Tuple[str, str]]) -> Tuple[List[int], List[str]]:
+    """Validate/resolve user-specified identifiers against HEADS, return (indices, names)."""
+    identifiers = [HEADS[i][0] for i in sorted(HEADS)]
+    ident_set = {h.lower() for h in identifiers}
     if targets:
         requested = {t.lower() for t in targets}
-        unknown = sorted(requested - HEAD_IDENTIFIERS_SET)
+        unknown = sorted(requested - ident_set)
         if unknown:
             raise click.ClickException(
                 f"Unknown target(s): {', '.join(unknown)}. "
-                f"Valid: {', '.join(HEAD_IDENTIFIERS)}"
+                f"Valid: {', '.join(identifiers)}"
             )
         chosen = [(i, HEADS[i][0]) for i in sorted(HEADS) if HEADS[i][0].lower() in requested]
     else:
@@ -126,39 +140,75 @@ def resolve_target_selection(targets: Tuple[str, ...]) -> Tuple[List[int], List[
     names = [n for _, n in chosen]
     return idxs, names
 
+def genome_config(genome: str):
+    """Return (HEADS, head_i_default, stats_default, models_default) for genome."""
+    genome = genome.lower()
+    if genome == "hg38":
+        return HEADS_HG38, 0, HG38_STATS_DEFAULT, HG38_MODELS_DEFAULT
+    elif genome == "mm10":
+        return HEADS_MM10, 1, MM10_STATS_DEFAULT, MM10_MODELS_DEFAULT
+    else:
+        raise click.ClickException("Invalid --genome. Use 'hg38' or 'mm10'.")
 
 # -----------------------------
 # CLI
 # -----------------------------
 @click.command(
     context_settings=dict(help_option_names=["-h", "--help"]),
-    help=(
-        "Ensemble Akita v2 HUMAN models (all 8 folds) on a multi-FASTA:\n"
-        "- averages predictions across folds\n"
-        "- converts selected heads to symmetric Hi-C matrices\n"
-        "- writes a compressed NPZ with 'headers', 'head_names', 'mats'\n"
-        "\n"
-        "Available heads:\n"
-        "[0] HFF      - HIC:HFF\n"
-        "[1] H1hESC   - HIC:H1hESC\n"
-        "[2] GM12878  - HIC:GM12878\n"
-        "[3] IMR90    - HIC:IMR90\n"
-        "[4] HCT116   - HIC:HCT116\n"
-    ),
+    help="""\
+Ensemble Akita v2 models (all 8 folds) on a multi-FASTA:
+- averages predictions across folds
+- converts selected heads to symmetric Hi-C matrices
+- writes a compressed NPZ with 'headers', 'head_names', 'mats'
+
+Available heads (hardcoded):
+
+  hg38:
+    [0] HFF           HIC:HFF
+    [1] H1hESC        HIC:H1hESC
+    [2] GM12878       HIC:GM12878
+    [3] IMR90         HIC:IMR90
+    [4] HCT116        HIC:HCT116
+
+  mm10:
+    [0] Hsieh2019_mESC_uC    HIC:mESC
+    [1] Bonev2017_mESC       HIC:mESC
+    [2] Bonev2017_CN         HIC:cortical neuron
+    [3] Bonev2017_ncx_CN     HIC:neocortex cortical neuron
+    [4] Bonev2017_NPC        HIC:neural progenitor cell
+    [5] Bonev2017_ncx_NPC    HIC:neocortex neural progenitor cell
+""",
 )
+
 @click.argument("fasta", type=click.Path(exists=True, dir_okay=False))
+@click.option("--genome", type=click.Choice(["hg38", "mm10"], case_sensitive=False),
+              default="hg38", show_default=True,
+              help="Genome to use (sets head mapping and default model/stats).")
 @click.option("--batch-size", type=int, default=4, show_default=True, help="Batch size for inference.")
 @click.option("--out", "out_npz", default="akita_ensemble_outputs.npz", show_default=True, help="Output NPZ path.")
-@click.option("--models-glob", default=MODELS_GLOB, show_default=True, help="Glob for human model0_best.h5 files. Use model1_best.h5 for mouse.")
-@click.option("--stats", "stats_path", default=DATA_STATS, show_default=True, help="Path to statistics.json. Use mm10_statistics.json for mouse in data.")
-@click.option(
-    "--targets",
-    multiple=True,
-    help="Target head identifiers to export (by name). If omitted, uses ALL heads.",
-)
-def main(fasta, batch_size, out_npz, models_glob, stats_path, targets):
+@click.option("--models-glob", default="", show_default=False,
+              help="Glob for model checkpoints. If omitted, set from --genome.")
+@click.option("--stats", "stats_path", default="", show_default=False,
+              help="Path to statistics.json. If omitted, set from --genome.")
+@click.option("--targets", multiple=True,
+              help="Target head identifiers to export (by name). If omitted, exports outputs from ALL heads for the chosen genome.")
+def main(fasta, genome, batch_size, out_npz, models_glob, stats_path, targets):
+    # Quiet TensorFlow logs
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     tf.get_logger().setLevel("ERROR")
+
+    # Resolve genome-specific config
+    HEADS, head_i, stats_default, models_default = genome_config(genome)
+
+    # Smart defaults for --models-glob / --stats if not provided
+    if not models_glob:
+        models_glob = models_default
+    if not stats_path:
+        stats_path = stats_default
+
+    click.echo(f"Genome: {genome}  |  head_i: {head_i}")
+    click.echo(f"Models glob: {models_glob}")
+    click.echo(f"Stats path:  {stats_path}")
 
     # Load stats
     stats = load_data_stats(stats_path)
@@ -171,51 +221,54 @@ def main(fasta, batch_size, out_npz, models_glob, stats_path, targets):
     click.echo(f"flattened target_length: {target_length}")
     click.echo(f"matrix (cropped) size: ({Lc},{Lc})")
 
-    # Resolve which heads to export
-    head_indices, head_names = resolve_target_selection(targets)
+    # Resolve which heads to export (genome-specific)
+    head_indices, head_names = resolve_target_selection(targets, HEADS)
     click.echo("Using heads:")
     for i in head_indices:
         click.echo(f"  [{i}] {HEADS[i][0]}  -  {HEADS[i][1]}")
 
     # Discover & load models
     pairs = find_models_and_params(models_glob)
-    click.echo(f"Found {len(pairs)} human checkpoints:")
+    click.echo(f"Found {len(pairs)} checkpoints:")
     for m, _ in pairs:
         click.echo(f"  - {m}")
-    models = [load_seqnn_model(m, p) for m, p in pairs]
+    models = [load_seqnn_model(m, p, head_i=head_i) for m, p in pairs]
     click.echo(f"Loaded {len(models)} models.")
 
     all_headers: List[str] = []
-    mats: List[np.ndarray] = []
+    mats: List[np.ndarray] = []  # each entry: [H, Lc, Lc] per sequence
 
+    # Iterate FASTA in batches
     for headers, recs in fasta_batches(fasta, batch_size):
-        x = encode_and_stack(recs, seq_length)
+        x = encode_and_stack(recs, seq_length)  # [B, L, 4]
 
+        # predict with each model then average: [B, T, C]
         pred_sum = None
         for model in models:
-            y = model.model.predict(x, verbose=0)
+            y = model.model.predict(x, verbose=0)  # [B, target_length, num_targets_for_genome]
             pred_sum = y if pred_sum is None else pred_sum + y
-        ensemble = pred_sum / float(len(models))
+        ensemble = pred_sum / float(len(models))    # [B, T, C]
 
+        # For each sequence in batch, convert selected heads to matrices
         for i, hdr in enumerate(headers):
             head_mats = []
             for h_idx in head_indices:
-                flat = ensemble[i, :, h_idx].astype(np.float32)
-                mat = from_upper_triu(flat, Lc, hic_diags)
+                flat = ensemble[i, :, h_idx].astype(np.float32)   # [T]
+                mat = from_upper_triu(flat, Lc, hic_diags)        # [Lc, Lc]
                 head_mats.append(mat)
-            mats.append(np.stack(head_mats, axis=0))
+            mats.append(np.stack(head_mats, axis=0))              # [H, Lc, Lc]
             all_headers.append(hdr)
 
         click.echo(f"Processed {len(all_headers)} sequences so far...")
 
+    # Stack and save
     mats_arr = np.stack(mats, axis=0) if mats else np.zeros((0, len(head_indices), Lc, Lc), dtype=np.float32)
     headers_arr = np.array(all_headers, dtype=object)
     head_names_arr = np.array(head_names, dtype=object)
 
     np.savez_compressed(out_npz, headers=headers_arr, head_names=head_names_arr, mats=mats_arr)
     click.echo(f"Saved N={len(all_headers)}, H={len(head_indices)} matrices to: {out_npz}")
-    click.echo("NPZ keys: 'headers', 'head_names', 'mats' (float32, N x H x L x L)")
-
+    click.echo("NPZ keys: 'headers' (object), 'head_names' (object), 'mats' (float32, N x H x L x L)")
 
 if __name__ == "__main__":
     try:
