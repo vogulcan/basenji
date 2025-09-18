@@ -1,4 +1,4 @@
-# Fork for Akita CLI and converting to uv project
+# Fork for making Akita CLI and converting to uv project instead of relying on conda envs
 
 # Clone the repo and Sync the uv
 ```bash
@@ -32,7 +32,7 @@ uv run python -c "import tensorflow as tf; print(tf.config.list_physical_devices
 uv pip install -e . --no-deps
 ```
 
-# Download akita model
+# Download akita models (v2)
 ```bash
 uv run gsutil cp -r gs://basenji_hic/3-2021/models .
 ```
