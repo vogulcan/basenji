@@ -12,3 +12,4 @@ basenji.egg-info/
 data/hg19.fa*
 .vscode/
 models/
+.venv/
