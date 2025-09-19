@@ -41,7 +41,7 @@ class SeqNN():
     self.augment_rc = False
     self.augment_shift = [0]
     self.strand_pair = []
-    self.verbose = True
+    self.verbose = False
 
   def build_block(self, current, block_params):
     """Construct a SeqNN block.
@@ -174,7 +174,7 @@ class SeqNN():
     for ho in self.head_output:
       self.models.append(tf.keras.Model(inputs=sequence, outputs=ho))
     self.model = self.models[0]
-    # if self.verbose: print(self.model.summary())
+    if self.verbose: print(self.model.summary())
 
     ###################################################
     # track pooling/striding and cropping
