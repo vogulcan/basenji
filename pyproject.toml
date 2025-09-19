@@ -41,5 +41,6 @@ dependencies = [
     "tensorflow-io-gcs-filesystem==0.25.0",
     "protobuf==3.20.*",
     "click>=8.1.8",
-    "gsutil"
+    "gsutil",
+    "tqdm>=4.67.1",
 ]
