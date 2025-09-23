@@ -3,9 +3,10 @@
 This fork is **not** a replacement for the original Basenji project.  
 Its scope is limited to:
 
-- Adding a **CLI wrapper** for Akita.
+- Adding a **CLI wrapper** for Akita, where CLI wrappers can input **fasta** file, and outputs **npz** files of Akita predictions.
 - Updating the environment setup to primarily use **uv**, with minimal reliance on `conda`,  
   for simpler installation and dependency management.
+- Updates to the original **Basenji** codebase will not be tracked here.
 
 ---
 ## Citation Notice
@@ -52,6 +53,7 @@ uv pip install -e . --no-deps
 ```
 
 #### For v2 models, download akita models (v2)
+#### v2 model is not provided as a single checkpoint (unlike v1), akita_cli_v2 ensembles model predictions from each fold by default. Please inspect each fold's predictions individually to decide on whether to ensemble them. For more details on how the model was trained: https://github.com/calico/basenji/tree/master/manuscripts/akita/v2
 ```bash
 uv run gsutil cp -r gs://basenji_hic/3-2021/models .
 uv run akita_cli_v2.py --help
