@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Akita CLI: Predict contact maps from FASTA and save [N, 512, 512] (or model-specific) to NPZ.
-
-Requirements (Python packages):
-  click, numpy, tensorflow, basenji (with dna_io + seqnn), cooltools, matplotlib (indirect), pandas (indirect)
+Akita CLI: Predict contact maps from FASTA and save [N, 448, 448] to NPZ.
 
 Files expected (defaults can be overridden via options):
   - akita_v1_params.json
@@ -11,12 +8,11 @@ Files expected (defaults can be overridden via options):
   - akita_v1_statistics.json
 
 Example:
-  ./akita_fasta_to_npz.py input.fa --out akita_preds.npz --target-index 0
+  ./akita_fasta_to_npz_verbose_tqdm.py input.fa --out akita_preds.npz --target-index 0
 
 Notes:
   * Sequences are automatically padded with 'N' if shorter than the required length
     or center-trimmed if longer (configurable via --length-policy).
-  * If your model produces a different cropped matrix size than 512, that size will be used.
 """
 
 import json
@@ -32,6 +28,7 @@ from cooltools.lib.numutils import set_diag
 from basenji import dna_io, seqnn
 
 import tensorflow as tf
+from tqdm import tqdm
 
 
 # ----------------------------
@@ -137,6 +134,8 @@ def upper_triu_to_full(vector_repr: np.ndarray, matrix_len: int, num_diags: int)
               help='Print headers as they are processed.')
 @click.option('--allow-gpu/--no-allow-gpu', default=True, show_default=True,
               help='Use GPU if available (disable to force CPU).')
+@click.option('--progress/--no-progress', default=True, show_default=True,
+              help='Show tqdm progress bars for sequences and batches.')
 def main(
     fasta: str,
     model_dir: str,
@@ -149,6 +148,7 @@ def main(
     out_path: str,
     list_headers: bool,
     allow_gpu: bool,
+    progress: bool,
 ):
     """Run Akita on FASTA and save an NPZ with [N, M, M] predictions."""
     # Resolve paths
@@ -175,7 +175,7 @@ def main(
     hic_diags = stats['diagonal_offset']
     target_crop = stats['crop_bp'] // pool_width
     target_length1 = seq_length // pool_width
-    matrix_len = target_length1 - 2 * target_crop  # expected to be 512 for classic Akita
+    matrix_len = target_length1 - 2 * target_crop
 
     # Build model
     model = seqnn.SeqNN(params_model)
@@ -186,12 +186,19 @@ def main(
     batch_1hot: List[np.ndarray] = []
     mats: List[np.ndarray] = []
 
+    total_batches = 0
+
+    pbar_seqs = tqdm(desc="Reading & queuing", unit="seq", dynamic_ncols=True, disable=not progress, leave=False)
+    pbar_batches = tqdm(desc="Predicting batches", unit="batch", dynamic_ncols=True, disable=not progress, leave=True)
+
     def flush_batch():
-        nonlocal batch_1hot, mats
+        nonlocal batch_1hot, mats, total_batches
         if not batch_1hot:
             return
         x = np.stack(batch_1hot, axis=0)  # [B, seqlen, 4]
         pred = model.model.predict(x, verbose=0)  # [B, T, C]
+        total_batches += 1
+        pbar_batches.update(1)
         # extract target vector(s) -> matrix
         # pred shape assumptions: T == stats['target_length']
         for b in range(pred.shape[0]):
@@ -207,11 +214,15 @@ def main(
         onehot = dna_io.dna_1hot(seq_fixed)
         batch_1hot.append(onehot)
         headers.append(header)
+        pbar_seqs.update(1)
         if len(batch_1hot) >= batch_size:
             flush_batch()
 
     # final flush
     flush_batch()
+
+    pbar_seqs.close()
+    pbar_batches.close()
 
     preds = np.stack(mats, axis=0) if mats else np.zeros((0, matrix_len, matrix_len), dtype=np.float32)
 
@@ -220,6 +231,7 @@ def main(
     np.savez_compressed(out_path, preds=preds, headers=np.array(headers), matrix_len=matrix_len)
 
     click.echo(f"Saved predictions: {out_path}")
+    click.echo(f"Sequences processed: {len(headers)}; Batches: {total_batches}")
     click.echo(f"Shape: {preds.shape} (N, {matrix_len}, {matrix_len})")
 
 
