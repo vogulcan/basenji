@@ -188,8 +188,8 @@ def main(
 
     total_batches = 0
 
-    pbar_seqs = tqdm(desc="Reading & queuing", unit="seq", dynamic_ncols=True, disable=not progress, leave=False)
-    pbar_batches = tqdm(desc="Predicting batches", unit="batch", dynamic_ncols=True, disable=not progress, leave=True)
+    pbar_seqs = tqdm(desc="Reading & queuing", unit="seq", dynamic_ncols=True, disable=not progress, leave=False, total=sum(1 for _ in read_fasta(fasta)))
+    pbar_batches = tqdm(desc="Predicting batches", unit="batch", dynamic_ncols=True, disable=not progress, leave=True, total=math.ceil(pbar_seqs.total / batch_size) if pbar_seqs.total else None)
 
     def flush_batch():
         nonlocal batch_1hot, mats, total_batches
