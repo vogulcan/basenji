@@ -8,7 +8,7 @@ Files expected (defaults can be overridden via options):
   - akita_v1_statistics.json
 
 Example:
-  ./akita_fasta_to_npz_verbose_tqdm.py input.fa --out akita_preds.npz --target-index 0
+  ./akita_fasta_to_npz_verbose_tqdm.py input.fa --out akita_preds.h5 --target-index 0
 
 Notes:
   * Sequences are automatically padded with 'N' if shorter than the required length
@@ -23,6 +23,7 @@ from typing import Iterator, List, Tuple
 import click
 import numpy as np
 from cooltools.lib.numutils import set_diag
+import h5py
 
 # Akita / Basenji
 from basenji import dna_io, seqnn
@@ -128,8 +129,8 @@ def upper_triu_to_full(vector_repr: np.ndarray, matrix_len: int, num_diags: int)
 @click.option('--length-policy', type=click.Choice(['auto', 'pad', 'trim', 'strict']),
               default='auto', show_default=True,
               help='How to handle sequences whose length differs from the model input length.')
-@click.option('--out', 'out_path', default='akita_preds.npz', show_default=True,
-              help='Output NPZ path containing array "preds" with shape [N, M, M].')
+@click.option('--out', 'out_path', default='akita_preds.h5', show_default=True,
+              help='Output HDF5 path containing dataset "preds" with shape [N, M, M].')
 @click.option('--list-headers/--no-list-headers', default=False, show_default=True,
               help='Print headers as they are processed.')
 @click.option('--allow-gpu/--no-allow-gpu', default=True, show_default=True,
@@ -226,13 +227,32 @@ def main(
 
     preds = np.stack(mats, axis=0) if mats else np.zeros((0, matrix_len, matrix_len), dtype=np.float32)
 
-    # Save
+    # Save (HDF5)
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
-    np.savez_compressed(out_path, preds=preds, headers=np.array(headers), matrix_len=matrix_len)
+    with h5py.File(out_path, 'w') as f:
+        # main tensor
+        dset = f.create_dataset(
+            'preds',
+            data=preds,
+            compression='gzip',
+            compression_opts=4,
+            chunks=True
+        )
+        # headers as variable-length UTF-8 strings
+        str_dt = h5py.string_dtype(encoding='utf-8')
+        f.create_dataset('headers', data=np.array(headers, dtype=object), dtype=str_dt)
 
-    click.echo(f"Saved predictions: {out_path}")
+        # useful metadata
+        f.attrs['matrix_len'] = int(matrix_len)
+        f.attrs['target_index'] = int(target_index)
+        f.attrs['seq_length'] = int(seq_length)
+        f.attrs['pool_width'] = int(pool_width)
+        f.attrs['diagonal_offset'] = int(hic_diags)
+
+    click.echo(f"Saved predictions (HDF5): {out_path}")
     click.echo(f"Sequences processed: {len(headers)}; Batches: {total_batches}")
     click.echo(f"Shape: {preds.shape} (N, {matrix_len}, {matrix_len})")
+
 
 
 if __name__ == '__main__':

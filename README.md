@@ -3,7 +3,7 @@
 This fork is **not** a replacement for the original Basenji project.  
 Its scope is limited to:
 
-- Adding a **CLI wrapper** for Akita, where CLI wrappers can input **fasta** file, and outputs **npz** files of Akita predictions.
+- Adding a **CLI wrapper** for Akita, where CLI wrappers can input **fasta** file, and outputs **h5** files of Akita predictions.
 - Updating the environment setup to primarily use **uv**, with minimal reliance on `conda`,  
   for simpler installation and dependency management.
 - Updates to the original **Basenji** codebase will not be tracked here.

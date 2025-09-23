@@ -12,6 +12,7 @@ import numpy as np
 import pysam
 import tensorflow as tf
 import tqdm
+import h5py
 
 from basenji import dna_io, seqnn
 from cooltools.lib.numutils import set_diag
@@ -192,7 +193,7 @@ def ensemble_preds(preds_by_fold, mode="log_mean"):
 Ensemble Akita v2 models (all 8 folds) on a multi-FASTA:
 - averages predictions across folds
 - converts selected heads to symmetric Hi-C matrices
-- writes a compressed NPZ with 'headers', 'head_names', 'mats'
+- writes an HDF5 file with datasets: 'headers', 'head_names', 'mats'
 
 Available heads (hardcoded):
 
@@ -229,10 +230,10 @@ Available heads (hardcoded):
 )
 @click.option(
     "--out",
-    "out_npz",
-    default="akita_ensemble_outputs.npz",
+    "out_path",
+    default="akita_ensemble_outputs.h5",
     show_default=True,
-    help="Output NPZ path.",
+    help="Output HDF5 path.",
 )
 @click.option(
     "--models-glob",
@@ -252,7 +253,7 @@ Available heads (hardcoded):
     multiple=True,
     help="Target head identifiers to export (by name). If omitted, exports outputs from ALL heads for the chosen genome.",
 )
-def main(fasta, genome, batch_size, out_npz, models_glob, stats_path, targets):
+def main(fasta, genome, batch_size, out_path, models_glob, stats_path, targets):
     # Quiet TensorFlow logs
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     tf.get_logger().setLevel("ERROR")
@@ -331,7 +332,7 @@ def main(fasta, genome, batch_size, out_npz, models_glob, stats_path, targets):
             mats.append(np.stack(head_mats, axis=0))
             all_headers.append(hdr)
 
-    # Stack and save
+    # Stack and save (HDF5)
     mats_arr = (
         np.stack(mats, axis=0)
         if mats
@@ -340,15 +341,36 @@ def main(fasta, genome, batch_size, out_npz, models_glob, stats_path, targets):
     headers_arr = np.array(all_headers, dtype=object)
     head_names_arr = np.array(head_names, dtype=object)
 
-    np.savez_compressed(
-        out_npz, headers=headers_arr, head_names=head_names_arr, mats=mats_arr
-    )
+    # ensure directory exists
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+    with h5py.File(out_path, "w") as f:
+        # core tensor: [N, H, Lc, Lc]
+        f.create_dataset(
+            "mats",
+            data=mats_arr,
+            compression="gzip",
+            compression_opts=4,
+            chunks=True,
+        )
+
+        # variable-length UTF-8 strings for headers/head_names
+        str_dt = h5py.string_dtype(encoding="utf-8")
+        f.create_dataset("headers", data=headers_arr, dtype=str_dt)
+        f.create_dataset("head_names", data=head_names_arr, dtype=str_dt)
+
+        # handy metadata
+        f.attrs["genome"] = str(genome)
+        f.attrs["Lc"] = int(Lc)
+        f.attrs["hic_diags"] = int(hic_diags)
+        f.attrs["seq_length"] = int(seq_length)
+        f.attrs["num_heads"] = int(len(head_indices))
+
     click.echo(
-        f"Saved N={len(all_headers)}, H={len(head_indices)} matrices to: {out_npz}"
+        f"Saved N={len(all_headers)}, H={len(head_indices)} matrices to: {out_path}"
     )
-    click.echo(
-        "NPZ keys: 'headers' (object), 'head_names' (object), 'mats' (float32, N x H x L x L)"
-    )
+    click.echo("HDF5 datasets: 'headers' (vlen utf-8), 'head_names' (vlen utf-8), 'mats' (float32, N x H x L x L)")
+
 
 
 if __name__ == "__main__":
