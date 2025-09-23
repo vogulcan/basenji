@@ -32,14 +32,16 @@ uv run python -c "import tensorflow as tf; print(tf.config.list_physical_devices
 uv pip install -e . --no-deps
 ```
 
-# Download akita models (v2)
+# For v2 models, download akita models (v2)
 ```bash
 uv run gsutil cp -r gs://basenji_hic/3-2021/models .
+uv run akita_cli_v2.py --help
+
 ```
 
-# Use akita cli
+# For v1 models, akita v1 model is in data.
 ```bash
-uv run akita_cli.py --help
+uv run akita_cli_v1.py --help
 ```
 
 <img src="docs/basset_image.png" width="200">
