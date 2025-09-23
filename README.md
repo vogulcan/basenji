@@ -1,18 +1,18 @@
-# Fork for making Akita CLI and converting to uv project instead of relying on conda envs
+## Fork for making Akita CLI and converting to uv project instead of relying on conda envs
 
-# Clone the repo and Sync the uv
+#### Clone the repo and Sync the uv
 ```bash
 uv sync
 ```
 
-# Workaround needed to downgrade cuda to 11.8, to be compatible with older TF version.
-## Create a tiny env that only hosts the CUDA .so's TF needs
+### Workaround needed to downgrade cuda to 11.8, to be compatible with older TF version.
+#### Create a tiny env that only hosts the CUDA .so's TF needs
 ```bash
 micromamba create -n cuda118 -c conda-forge \
     cudatoolkit=11.8 cudnn=8.8.0.121 -y
 ```
 
-# Then, set these env vars before running uv python:
+#### Then, set these env vars before running uv python:
 ```bash
 # Replace with your actual micromamba envs path if different
 export CUDA_HOME="$HOME/micromamba/envs/cuda118"
@@ -22,27 +22,30 @@ export LD_LIBRARY_PATH="$CUDA_HOME/lib"
 export XLA_FLAGS="--xla_gpu_cuda_data_dir=$CUDA_HOME"
 ```
 
-# Check it worked:
+#### Check it worked:
 ```bash
 uv run python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
 ```
 
-# Install basenji
+#### Install basenji
 ```bash
 uv pip install -e . --no-deps
 ```
 
-# For v2 models, download akita models (v2)
+#### For v2 models, download akita models (v2)
 ```bash
 uv run gsutil cp -r gs://basenji_hic/3-2021/models .
 uv run akita_cli_v2.py --help
-
 ```
 
-# For v1 models, akita v1 model is in data.
+#### For v1 models, akita v1 model is in data.
 ```bash
 uv run akita_cli_v1.py --help
 ```
+
+---
+---
+---
 
 <img src="docs/basset_image.png" width="200">
 
