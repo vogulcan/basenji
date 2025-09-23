@@ -1,4 +1,23 @@
-## Fork for making Akita CLI and converting to uv project instead of relying on conda envs
+## About This Repository
+
+This fork is **not** a replacement for the original Basenji project.  
+Its scope is limited to:
+
+- Adding a **CLI wrapper** for Akita.
+- Updating the environment setup to primarily use **uv**, with minimal reliance on `conda`,  
+  for simpler installation and dependency management.
+
+---
+## Citation Notice
+
+If you use **Basenji**, **Akita**, or any other software from this repository in your work,  
+please **cite the original work** (not this fork).
+
+For further details, see the original Basenji repository:  
+➡️ [https://github.com/calico/basenji](https://github.com/calico/basenji)
+
+---
+## Setup Instructions
 
 #### Clone the repo and Sync the uv
 ```bash
@@ -42,8 +61,3 @@ uv run akita_cli_v2.py --help
 ```bash
 uv run akita_cli_v1.py --help
 ```
-
----
-# If you use Basenji, Akita or any other software from this repository in your work;
-# Please cite the original work (not this fork):
-# See the original Basenji repository for further information: https://github.com/calico/basenji
